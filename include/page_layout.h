@@ -4,7 +4,9 @@
 #include <stdint.h>
 #include <string.h>
 #include <stdlib.h>
-#include "disk_manager.h" /* Required for DM_PAGE_SIZE and dm_page_count_get() */
+
+#include "db_global.h"
+#include "disk_manager.h" 
 
 /* 
  * Page Header Offsets (Total: 22 Bytes)

@@ -1,20 +1,20 @@
 #include "disk_manager.h"
 #include <assert.h>
 
-char data_buffer[DM_PAGE_SIZE];
-char test_buffer_prev[DM_PAGE_SIZE];
-char test_buffer_next[DM_PAGE_SIZE];
+char data_buffer[DB_PAGE_SIZE];
+char test_buffer_prev[DB_PAGE_SIZE];
+char test_buffer_next[DB_PAGE_SIZE];
 
 void help_read_and_compare(int page_id, char *str) {
     assert(dm_page_read(data_buffer, page_id) == 0);
-    assert(strncmp(str, data_buffer, DM_PAGE_SIZE) == 0);
+    assert(strncmp(str, data_buffer, DB_PAGE_SIZE) == 0);
 }
 
 void init_success(void) {
     assert(dm_clear() == 0);
     assert(dm_init() == 0);
 
-    memset(data_buffer, 0, DM_PAGE_SIZE);
+    memset(data_buffer, 0, DB_PAGE_SIZE);
 
     sprintf(test_buffer_prev, "%s", "TEST_PREV");
     sprintf(test_buffer_next, "%s", "TEST_NEXT");

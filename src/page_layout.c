@@ -148,7 +148,7 @@ int pl_frame_compact(uint8_t frame[]) {
     free_space_pointer = pl_frame_get_free_space_pointer(frame);
     
     /* The actual size of the tuples sitting at the end of the page */
-    used_data_size = DM_PAGE_SIZE - free_space_pointer;
+    used_data_size = DB_PAGE_SIZE - free_space_pointer;
     slot_count = pl_frame_get_slot_count(frame);
 
     /* If there is no data to compact, just clear fragmentation and return */
@@ -165,7 +165,7 @@ int pl_frame_compact(uint8_t frame[]) {
     /* dest=data_snapshot, src=frame, dest_offset=0, src_offset=free_space_pointer */
     util_buffer_write_section(data_snapshot, frame, 0, free_space_pointer, used_data_size);
     
-    target_offset = DM_PAGE_SIZE;
+    target_offset = DB_PAGE_SIZE;
     new_slot_count = 0;
     
     for (i = 0; i < slot_count; i++) {
@@ -199,7 +199,7 @@ uint8_t* pl_frame_create(uint8_t *new_frame) {
     frame_write_bytes_to_frame(new_frame, PAGE_ID_OFFSET, page_id, 4);
     frame_write_bytes_to_frame(new_frame, LSN_OFFSET, 0, 8);
     frame_write_bytes_to_frame(new_frame, SLOT_COUNT_OFFSET, 0, 2);
-    frame_write_bytes_to_frame(new_frame, FREE_SPACE_POINTER_OFFSET, DM_PAGE_SIZE, 2); /* Fixed from DM_PAGE_SIZE - 1 */
+    frame_write_bytes_to_frame(new_frame, FREE_SPACE_POINTER_OFFSET, DB_PAGE_SIZE, 2); 
     frame_write_bytes_to_frame(new_frame, FRAGMENTED_SPACE_OFFSET, 0, 2);
     frame_write_bytes_to_frame(new_frame, FLAGS_OFFSET, 0, 4);
     return new_frame;

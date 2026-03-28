@@ -1,28 +1,31 @@
 #include "disk_manager.h"
 #include <assert.h>
+#include <string.h>
 
-char data_buffer[DB_PAGE_SIZE];
-char test_buffer_prev[DB_PAGE_SIZE];
-char test_buffer_next[DB_PAGE_SIZE];
+uint8_t test_buffer_prev[DB_PAGE_SIZE];
+uint8_t test_buffer_next[DB_PAGE_SIZE];
 
-void help_read_and_compare(int page_id, char *str) {
-    assert(dm_page_read(data_buffer, page_id) == 0);
-    assert(strncmp(str, data_buffer, DB_PAGE_SIZE) == 0);
+void help_read_and_compare(uint32_t page_id, uint8_t *expected_str) {
+    uint8_t *read_buf = dm_page_read(page_id);
+    assert(read_buf != NULL);
+    assert(memcmp(expected_str, read_buf, DB_PAGE_SIZE) == 0);
+    free(read_buf);
 }
 
 void init_success(void) {
     assert(dm_clear() == 0);
     assert(dm_init() == 0);
 
-    memset(data_buffer, 0, DB_PAGE_SIZE);
+    memset(test_buffer_prev, 0, DB_PAGE_SIZE);
+    memset(test_buffer_next, 0, DB_PAGE_SIZE);
 
-    sprintf(test_buffer_prev, "%s", "TEST_PREV");
-    sprintf(test_buffer_next, "%s", "TEST_NEXT");
-
+    strcpy((char *)test_buffer_prev, "TEST_PREV");
+    strcpy((char *)test_buffer_next, "TEST_NEXT");
 }
 
 void read_out_of_bounds_error(void) {
-    assert(dm_page_read(data_buffer, 999) == 1);
+    uint8_t *read_buf = dm_page_read(999);
+    assert(read_buf == NULL);
 }
 
 void write_success(void) {
@@ -41,11 +44,11 @@ void replace_success(void) {
 }
 
 void write_out_of_bounds_error(void) {
-    assert(dm_page_write(data_buffer, 999, 0) == 1);
+    uint8_t dummy[DB_PAGE_SIZE] = {0};
+    assert(dm_page_write(dummy, 999, 0) == 1);
 }
 
 int main(void) {
-    
     init_success();
     read_out_of_bounds_error();
     write_success();
@@ -53,6 +56,7 @@ int main(void) {
     replace_success();
     write_out_of_bounds_error();
 
+    dm_close();
     printf("DM - All assertions passed!\n");
-
+    return 0;
 }

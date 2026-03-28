@@ -1,12 +1,10 @@
 #ifndef PAGE_LAYOUT_H
 #define PAGE_LAYOUT_H
 
-#include <stdint.h>
-#include <string.h>
-#include <stdlib.h>
-
 #include "db_global.h"
-#include "disk_manager.h" 
+
+#include <stdlib.h>
+#include <string.h>
 
 /* 
  * Page Header Offsets (Total: 22 Bytes)
@@ -27,30 +25,14 @@
 #define PL_HEADER_SIZE            22
 
 /* --------------------------------------------------------------------------
- * Page Header Getters
- * -------------------------------------------------------------------------- */
-uint32_t pl_frame_get_page_id(uint8_t frame[]);
-uint64_t pl_frame_get_lsn(uint8_t frame[]);
-uint16_t pl_frame_get_slot_count(uint8_t frame[]);
-uint16_t pl_frame_get_free_space_pointer(uint8_t frame[]);
-uint16_t pl_frame_get_free_space(uint8_t frame[]);
-uint16_t pl_frame_get_fragmented_space(uint8_t frame[]);
-uint32_t pl_frame_get_flags(uint8_t frame[]);
-
-/* --------------------------------------------------------------------------
- * Slot Array Management
- * -------------------------------------------------------------------------- */
-uint16_t pl_frame_slot_get_start(uint8_t frame[], uint16_t slot_id);
-uint16_t pl_frame_slot_get_size(uint8_t frame[], uint16_t slot_id);
-void pl_frame_update_slot_array(uint8_t frame[], uint16_t slot_id, uint16_t new_start, uint16_t new_size);
-
-/* --------------------------------------------------------------------------
  * Page Operations (Create, Insert, Update, Delete, Compact)
  * -------------------------------------------------------------------------- */
-uint8_t* pl_frame_create(uint8_t *new_frame);
-int pl_frame_insert_slot(uint8_t frame[], uint8_t *slot, uint16_t size);
-int pl_frame_update_slot(uint8_t frame[], uint16_t slot_id, uint8_t *new_slot, uint16_t new_size);
-int pl_frame_delete_slot(uint8_t frame[], uint16_t slot_id);
-int pl_frame_compact(uint8_t frame[]);
+int pl_page_insert_tuple(uint8_t page[], uint8_t *tuple, uint16_t size);
+int pl_page_update_tuple(uint8_t page[], uint16_t slot_id, uint8_t *tuple, uint16_t new_size);
+int pl_page_delete_tuple(uint8_t page[], uint16_t slot_id);
+
+int pl_page_compact(uint8_t page[]);
+
+void pl_page_create(uint8_t *new_page, uint32_t page_id);
 
 #endif /* PAGE_LAYOUT_H */

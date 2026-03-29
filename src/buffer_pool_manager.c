@@ -1,104 +1,160 @@
 #include "buffer_pool_manager.h"
 #include "disk_manager.h"
 #include "page_layout.h"
-#include "dmap.h"
-#include <string.h>
+#include "page_table.h"
 
-static dmap* pm_dmap = NULL;
-static uint8_t* pm_callback_buffer = NULL;
-static PageNode* pm_dirty_pages = NULL;
+static PageTable *page_table = NULL;
+static Frame *buffer_pool = NULL;
+static int clock_hand = 0;
 
-/* Eviction callback: Adds the evicted dirty page to the bulk write list */
-static int pm_dmap_callback(uint32_t page_id, uint8_t* buffer) {
-    PageNode* new_node = (PageNode*)malloc(sizeof(PageNode));
-    if (new_node == NULL) {
-        return 1; /* Memory allocation failure */
-    }
-
-    /* Copy the evicted buffer data into the page node */
-    memcpy(new_node->page, buffer, DB_PAGE_SIZE);
-    new_node->page_id = page_id;
-    new_node->is_new = 0; /* Evicted pages from cache already exist on disk */
+int pm_init(void) {
+    int i;
     
-    /* Prepend to the linked list */
-    new_node->next = pm_dirty_pages;
-    pm_dirty_pages = new_node;
-
+    page_table = (PageTable*)malloc(sizeof(PageTable));
+    buffer_pool = (Frame*)malloc(POOL_SIZE * sizeof(Frame));
+    
+    if (page_table == NULL || buffer_pool == NULL) return 1;
+    
+    pt_init(page_table);
+    clock_hand = 0;
+    
+    for (i = 0; i < POOL_SIZE; i++) {
+        buffer_pool[i].pin_count = 0;
+        buffer_pool[i].ref_bit = 0;
+        buffer_pool[i].state = FRAME_STATE_EMPTY;
+        buffer_pool[i].next = NULL;
+    }
     return 0;
 }
 
-int pm_init(void) {
-    if (pm_dmap == NULL) pm_dmap = (dmap *)malloc(sizeof(dmap));
-    if (pm_callback_buffer == NULL) pm_callback_buffer = (uint8_t *)malloc(DB_PAGE_SIZE * sizeof(uint8_t));
-    
-    pm_dirty_pages = NULL; 
-    
-    if (pm_dmap != NULL) {
-        memset(pm_dmap, 0, sizeof(dmap));
-    }
+static int find_victim_frame(void) {
+    int iterations = 0;
+    while (iterations < POOL_SIZE * 2) { /* Sweep twice at most */
+        Frame *f = &buffer_pool[clock_hand];
+        
+        if (f->state == FRAME_STATE_EMPTY) {
+            int victim = clock_hand;
+            clock_hand = (clock_hand + 1) % POOL_SIZE;
+            return victim;
+        }
 
-    return (pm_dmap == NULL || pm_callback_buffer == NULL) ? 1 : 0;
+        if (f->pin_count == 0) {
+            if (f->ref_bit == 1) {
+                f->ref_bit = 0; /* Second chance */
+            } else {
+                int victim = clock_hand;
+                clock_hand = (clock_hand + 1) % POOL_SIZE;
+                return victim;
+            }
+        }
+        clock_hand = (clock_hand + 1) % POOL_SIZE;
+        iterations++;
+    }
+    
+    /* If we get here, every single page in the pool is pinned! */
+    return -1; 
 }
 
-uint8_t* pm_fetch_page(uint32_t page_id) {
-    uint8_t* out_buffer = (uint8_t*)malloc(DB_PAGE_SIZE);
-    int status;
-    if (!out_buffer) return NULL;
+Frame* pm_fetch_frame(uint32_t page_id) {
+    int frame_id = pt_get(page_table, page_id);
+    Frame *frame;
 
-    status = dmap_get(pm_dmap, page_id, out_buffer);
-    
-    if (status != 0) {
-        free(out_buffer);
-        out_buffer = dm_page_read(page_id);
-        
-        if (out_buffer == NULL) {
-            return NULL;
-        }
-        
-        status = dmap_put(pm_dmap, page_id, out_buffer, pm_dmap_callback, pm_callback_buffer);
-        if (status != 0) {
-            free(out_buffer);
-            return NULL;
-        }
+    if (frame_id != -1) {
+        buffer_pool[frame_id].pin_count++;
+        buffer_pool[frame_id].ref_bit = 1;
+        return &buffer_pool[frame_id];
     }
-    return out_buffer;
+
+    frame_id = find_victim_frame();
+    frame = &buffer_pool[frame_id];
+
+    if (frame->state == FRAME_STATE_DIRTY || frame->state == FRAME_STATE_NEW) {
+        dm_write_page(frame);
+    }
+
+    if (frame->state != FRAME_STATE_EMPTY) {
+        pt_remove(page_table, frame->page_id);
+    }
+
+    if (dm_read_page_into(frame->page, page_id) != 0) {
+        return NULL; 
+    }
+
+    frame->page_id = page_id;
+    frame->pin_count = 1; 
+    frame->ref_bit = 1;
+    frame->state = FRAME_STATE_CLEAN;
+
+    pt_put(page_table, page_id, frame_id);
+
+    return frame;
 }
 
-uint32_t pm_create_page(uint8_t *buffer) {
-    uint32_t page_id = db_page_count; // PM gets the ID from the global
-    pl_page_create(buffer, page_id);  // Passes it to the page layout
+Frame* pm_create_frame(void) {
+    int frame_id = find_victim_frame();
+    Frame *frame = &buffer_pool[frame_id];
+
+    if (frame->state == FRAME_STATE_DIRTY || frame->state == FRAME_STATE_NEW) {
+        dm_write_page(frame);
+    }
+
+    if (frame->state != FRAME_STATE_EMPTY) {
+        pt_remove(page_table, frame->page_id);
+    }
+
+    /* Assign next global ID and initialize the physical page layout */
+    frame->page_id = db_page_count; 
+    db_page_count++;
     
-    dmap_put(pm_dmap, page_id, buffer, pm_dmap_callback, pm_callback_buffer);
-    dmap_set_is_dirty(pm_dmap, page_id, 1);
-    
-    db_page_count++; // Increment it here or let the disk manager do it on write
-    return page_id;
+    pl_set_page_layout(frame->page, frame->page_id);
+
+    frame->pin_count = 1;
+    frame->ref_bit = 1;
+    frame->state = FRAME_STATE_NEW;
+
+    pt_put(page_table, frame->page_id, frame_id);
+
+    return frame;
+}
+
+void pm_unpin_frame(uint32_t page_id, int is_dirty) {
+    int frame_id = pt_get(page_table, page_id);
+    if (frame_id != -1) {
+        if (buffer_pool[frame_id].pin_count > 0) {
+            buffer_pool[frame_id].pin_count--;
+        }
+        if (is_dirty) {
+            buffer_pool[frame_id].state = FRAME_STATE_DIRTY;
+        }
+    }
 }
 
 int pm_close(void) {
     int i;
+    Frame *dirty_list = NULL;
 
-    /* 1. Sweep the cache for any dirty pages that haven't been evicted yet */
-    if (pm_dmap != NULL) {
-        for (i = 0; i < MAX_ENTRIES; i++) {
-            if (pm_dmap->table[i].valid == 1 && pm_dmap->table[i].is_dirty == 1) {
-                pm_dmap_callback(pm_dmap->table[i].key, pm_dmap->table[i].value);
-            }
+    if (buffer_pool == NULL) return 0;
+
+    for (i = 0; i < POOL_SIZE; i++) {
+        Frame *f = &buffer_pool[i];
+        if (f->state == FRAME_STATE_DIRTY || f->state == FRAME_STATE_NEW) {
+            /* Create a copy of the frame for the bulk write list */
+            Frame *copy = (Frame*)malloc(sizeof(Frame));
+            memcpy(copy, f, sizeof(Frame));
+            copy->next = dirty_list;
+            dirty_list = copy;
         }
     }
 
-    /* 2. Execute the bulk write for all accumulated dirty pages */
-    if (pm_dirty_pages != NULL) {
-        /* dm_page_write_bulk handles the memory freeing of the nodes */
-        pm_dirty_pages = dm_page_write_bulk(pm_dirty_pages); 
+    if (dirty_list != NULL) {
+        dm_write_pages(dirty_list); 
     }
 
-    /* 3. Clean up manager memory */
-    free(pm_dmap);
-    free(pm_callback_buffer);
-    
-    pm_dmap = NULL;
-    pm_callback_buffer = NULL;
-    
+    pt_clear(page_table);
+    free(page_table);
+    free(buffer_pool);
+
+    page_table = NULL;
+    buffer_pool = NULL;
     return 0;
 }
